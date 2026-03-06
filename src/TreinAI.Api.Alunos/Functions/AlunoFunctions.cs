@@ -18,15 +18,18 @@ namespace TreinAI.Api.Alunos.Functions;
 public class AlunoFunctions
 {
     private readonly IRepository<Aluno> _repository;
+    private readonly IRepository<HistoricoPeso> _historicoPesoRepository;
     private readonly TenantContext _tenantContext;
     private readonly ILogger<AlunoFunctions> _logger;
 
     public AlunoFunctions(
         IRepository<Aluno> repository,
+        IRepository<HistoricoPeso> historicoPesoRepository,
         TenantContext tenantContext,
         ILogger<AlunoFunctions> logger)
     {
         _repository = repository;
+        _historicoPesoRepository = historicoPesoRepository;
         _tenantContext = tenantContext;
         _logger = logger;
     }
@@ -234,26 +237,107 @@ public class AlunoFunctions
     }
 
     /// <summary>
-    /// GET /api/alunos/me — Get the aluno record for the currently logged-in user.
-    /// Used by aluno-role users to discover their aluno record ID.
+    /// PATCH /api/alunos/{id}/peso — Update the weight of a student and record history.
+    /// Body: { "peso": 70.5, "observacao": "optional note" }
+    /// Both aluno (own data) and professor (own students) can update.
     /// </summary>
-    [Function("GetAlunoMe")]
-    public async Task<HttpResponseData> GetAlunoMe(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "alunos/me")] HttpRequestData req)
+    [Function("UpdateAlunoPeso")]
+    public async Task<HttpResponseData> UpdateAlunoPeso(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "patch", Route = "alunos/{id}/peso")] HttpRequestData req,
+        string id)
     {
-        _logger.LogInformation("Getting aluno record for user {UserId}", _tenantContext.UserId);
-
-        var alunos = await _repository.QueryAsync(
-            _tenantContext.TenantId,
-            a => a.UserId == _tenantContext.UserId);
-
-        var aluno = alunos.FirstOrDefault();
-        if (aluno == null)
+        // Resolve "me" for alunos
+        string resolvedId = id;
+        if (id.Equals("me", StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotFoundException("Aluno record not found for current user.");
+            var meList = await _repository.QueryAsync(
+                _tenantContext.TenantId,
+                a => a.UserId == _tenantContext.UserId);
+            var me = meList.FirstOrDefault();
+            if (me == null) throw new NotFoundException("Aluno", $"userId={_tenantContext.UserId}");
+            resolvedId = me.Id;
         }
 
-        return await ValidationHelper.OkAsync(req, aluno);
+        var existing = await _repository.GetByIdAsync(resolvedId, _tenantContext.TenantId);
+        if (existing == null) throw new NotFoundException("Aluno", resolvedId);
+
+        // Authorization
+        if (_tenantContext.IsProfessor && existing.ProfessorId != _tenantContext.UserId)
+            throw new ForbiddenException("Você não tem permissão para atualizar este aluno.");
+        if (_tenantContext.IsAluno && existing.UserId != _tenantContext.UserId)
+            throw new ForbiddenException("Você só pode atualizar seus próprios dados.");
+
+        var body = await req.ReadFromJsonAsync<PesoUpdateRequest>();
+        if (body == null || body.Peso <= 0)
+            throw new BusinessValidationException("Peso deve ser maior que zero.");
+
+        var pesoAnterior = existing.Peso ?? 0;
+
+        _logger.LogInformation("Updating peso for aluno {AlunoId}: {PesoAnterior} → {PesoNovo}",
+            resolvedId, pesoAnterior, body.Peso);
+
+        // Create history record
+        var historico = new HistoricoPeso
+        {
+            TenantId = _tenantContext.TenantId,
+            AlunoId = resolvedId,
+            PesoAnterior = pesoAnterior,
+            PesoNovo = body.Peso,
+            DataRegistro = DateTime.UtcNow,
+            Observacao = body.Observacao,
+            CreatedBy = _tenantContext.UserId,
+            UpdatedBy = _tenantContext.UserId,
+        };
+        await _historicoPesoRepository.CreateAsync(historico);
+
+        // Update the aluno's current peso
+        existing.Peso = body.Peso;
+        existing.UpdatedAt = DateTime.UtcNow;
+        existing.UpdatedBy = _tenantContext.UserId;
+        var updated = await _repository.UpdateAsync(existing);
+
+        return await ValidationHelper.OkAsync(req, updated);
+    }
+
+    /// <summary>
+    /// GET /api/alunos/{id}/historico-peso — Get weight history for a student, sorted desc.
+    /// Both aluno (own data) and professor (own students) can view.
+    /// </summary>
+    [Function("GetHistoricoPeso")]
+    public async Task<HttpResponseData> GetHistoricoPeso(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "alunos/{id}/historico-peso")] HttpRequestData req,
+        string id)
+    {
+        // Resolve "me" for alunos
+        string resolvedId = id;
+        if (id.Equals("me", StringComparison.OrdinalIgnoreCase))
+        {
+            var meList = await _repository.QueryAsync(
+                _tenantContext.TenantId,
+                a => a.UserId == _tenantContext.UserId);
+            var me = meList.FirstOrDefault();
+            if (me == null) throw new NotFoundException("Aluno", $"userId={_tenantContext.UserId}");
+            resolvedId = me.Id;
+        }
+
+        var aluno = await _repository.GetByIdAsync(resolvedId, _tenantContext.TenantId);
+        if (aluno == null) throw new NotFoundException("Aluno", resolvedId);
+
+        // Authorization
+        if (_tenantContext.IsProfessor && aluno.ProfessorId != _tenantContext.UserId)
+            throw new ForbiddenException("Você não tem permissão para ver este aluno.");
+        if (_tenantContext.IsAluno && aluno.UserId != _tenantContext.UserId)
+            throw new ForbiddenException("Você só pode acessar seus próprios dados.");
+
+        _logger.LogInformation("Getting historico-peso for aluno {AlunoId}", resolvedId);
+
+        var historico = await _historicoPesoRepository.QueryAsync(
+            _tenantContext.TenantId,
+            h => h.AlunoId == resolvedId);
+
+        var sorted = historico.OrderByDescending(h => h.DataRegistro).ToList();
+
+        return await ValidationHelper.OkAsync(req, sorted);
     }
 
     /// <summary>
@@ -277,4 +361,13 @@ public class AlunoFunctions
 
         return await ValidationHelper.OkAsync(req, new { count });
     }
+}
+
+/// <summary>
+/// Request body for PATCH /api/alunos/{id}/peso
+/// </summary>
+public class PesoUpdateRequest
+{
+    public double Peso { get; set; }
+    public string? Observacao { get; set; }
 }
