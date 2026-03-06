@@ -13,6 +13,7 @@ permissions:
 
 env:
   DOTNET_VERSION: "8.0.x"
+  PROJECT_PATH: "src/TreinAI.Api.Alunos"
 
 jobs:
   # ────────────────────────────────────────────
@@ -25,23 +26,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout shared library
+        uses: actions/checkout@v4
+        with:
+          repository: tbongiovani-msft/treinai-shared
+          path: ../treinai-shared
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore ${{ env.PROJECT_PATH }}
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build ${{ env.PROJECT_PATH }} --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test --configuration Release --no-build --verbosity normal
+        run: dotnet test ${{ env.PROJECT_PATH }} --configuration Release --no-build --verbosity normal
 
       - name: Publish
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: dotnet publish --configuration Release --no-build --output ./publish
+        run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-build --output ./publish
 
       - name: Upload artifact
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
