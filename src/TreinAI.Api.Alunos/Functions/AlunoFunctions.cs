@@ -73,6 +73,30 @@ public class AlunoFunctions
     }
 
     /// <summary>
+    /// GET /api/alunos/me — Get the Aluno record for the currently logged-in user.
+    /// Used by aluno-role users to discover their alunoRecordId.
+    /// </summary>
+    [Function("GetMyAluno")]
+    public async Task<HttpResponseData> GetMyAluno(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "alunos/me")] HttpRequestData req)
+    {
+        _logger.LogInformation("Getting aluno record for user {UserId} in tenant {TenantId}",
+            _tenantContext.UserId, _tenantContext.TenantId);
+
+        var alunos = await _repository.QueryAsync(
+            _tenantContext.TenantId,
+            a => a.UserId == _tenantContext.UserId);
+
+        var aluno = alunos.FirstOrDefault();
+        if (aluno == null)
+        {
+            throw new NotFoundException("Aluno", $"userId={_tenantContext.UserId}");
+        }
+
+        return await ValidationHelper.OkAsync(req, aluno);
+    }
+
+    /// <summary>
     /// GET /api/alunos/{id} — Get a specific student by ID.
     /// </summary>
     [Function("GetAlunoById")]
