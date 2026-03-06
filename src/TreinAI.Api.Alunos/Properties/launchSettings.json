@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "TreinAI.Api.Alunos": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7112",
+      "launchBrowser": false
+    }
+  }
+}
