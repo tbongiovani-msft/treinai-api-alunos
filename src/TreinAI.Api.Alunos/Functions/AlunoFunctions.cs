@@ -73,37 +73,33 @@ public class AlunoFunctions
     }
 
     /// <summary>
-    /// GET /api/alunos/me — Get the Aluno record for the currently logged-in user.
-    /// Used by aluno-role users to discover their alunoRecordId.
-    /// </summary>
-    [Function("GetMyAluno")]
-    public async Task<HttpResponseData> GetMyAluno(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "alunos/me")] HttpRequestData req)
-    {
-        _logger.LogInformation("Getting aluno record for user {UserId} in tenant {TenantId}",
-            _tenantContext.UserId, _tenantContext.TenantId);
-
-        var alunos = await _repository.QueryAsync(
-            _tenantContext.TenantId,
-            a => a.UserId == _tenantContext.UserId);
-
-        var aluno = alunos.FirstOrDefault();
-        if (aluno == null)
-        {
-            throw new NotFoundException("Aluno", $"userId={_tenantContext.UserId}");
-        }
-
-        return await ValidationHelper.OkAsync(req, aluno);
-    }
-
-    /// <summary>
     /// GET /api/alunos/{id} — Get a specific student by ID.
+    /// Special case: when id == "me", resolve the Aluno record by the current user's UserId.
     /// </summary>
     [Function("GetAlunoById")]
     public async Task<HttpResponseData> GetAlunoById(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "alunos/{id}")] HttpRequestData req,
         string id)
     {
+        // Special case: /api/alunos/me — resolve by current user
+        if (id.Equals("me", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Getting aluno record for user {UserId} in tenant {TenantId}",
+                _tenantContext.UserId, _tenantContext.TenantId);
+
+            var alunos = await _repository.QueryAsync(
+                _tenantContext.TenantId,
+                a => a.UserId == _tenantContext.UserId);
+
+            var myAluno = alunos.FirstOrDefault();
+            if (myAluno == null)
+            {
+                throw new NotFoundException("Aluno", $"userId={_tenantContext.UserId}");
+            }
+
+            return await ValidationHelper.OkAsync(req, myAluno);
+        }
+
         _logger.LogInformation("Getting aluno {AlunoId} for tenant {TenantId}", id, _tenantContext.TenantId);
 
         var aluno = await _repository.GetByIdAsync(id, _tenantContext.TenantId);
