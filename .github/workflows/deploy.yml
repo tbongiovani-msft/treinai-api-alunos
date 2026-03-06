@@ -54,6 +54,7 @@ jobs:
           name: function-app
           path: ./publish
           retention-days: 1
+          include-hidden-files: true
 
   # ────────────────────────────────────────────
   # Deploy — only on push to main
