@@ -25,6 +25,9 @@ var host = new HostBuilder()
         services.AddTreinAIShared(cosmosEndpoint, databaseName);
         services.AddRepository<Aluno>("alunos");
         services.AddRepository<HistoricoPeso>("historico-peso");
+        services.AddRepository<Usuario>("usuarios");
+        services.AddRepository<Notificacao>("notificacoes");
+        services.AddNotificationService();
     })
     .Build();
 
